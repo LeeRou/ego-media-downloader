@@ -9,28 +9,30 @@
 import { writeFile, appendFile, mkdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 
-// 载入通用「多档择优」内核。
+// ---- 公共环境模块（cmd stdin 下相对 import 不可靠，用多候选目录定位）----
 // 注意：ego-browser 用 cmd stdin 跑脚本时，脚本被当作 [eval2] 执行，
-// 相对 import 会解析到 ego 安装目录而不是脚本所在目录 —— 所以必须走绝对 file:// 候选。
-const Q = await (async () => {
-  const cands = [
-    "file:///F:/linshi/ego-task/_quality.mjs",
-    "file:///C:/Users/LR/.agents/skills/ego-media-downloader/tools/_quality.mjs",
-  ];
-  for (const c of cands) { try { return await import(c); } catch (e) {} }
-  throw new Error("无法加载 _quality.mjs（请把 _quality.mjs 与平台脚本一起复制到任务目录）");
+// 相对 import 会解析到 ego 安装目录而不是脚本所在目录 —— 故由 _env.mjs 用候选目录定位。
+const ENV = await (async () => {
+  const { pathToFileURL } = await import("node:url");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const roots = [process.env.EMD_TOOLS_DIR, process.cwd(), join(process.cwd(), "ego-task"),
+    join(homedir(), ".agents", "skills", "ego-media-downloader", "tools")].filter(Boolean);
+  for (const r of roots) {
+    try { return await import(pathToFileURL(join(r, "_env.mjs")).href); } catch (e) {}
+  }
+  throw new Error("无法加载 _env.mjs（请与本脚本放在同一目录，或设置 EMD_TOOLS_DIR）");
 })();
+
+// 载入通用「多档择优」内核（由 _env.mjs 在候选目录里定位）
+const Q = await ENV.loadKernel("_quality.mjs");
 const { rankCands, pickBest } = Q;
 
-// 配置读取：优先脚本同目录的 emd-config.json；其次任务目录绝对路径（cmd stdin 运行时 import.meta.url 不可靠）
+// 配置读取：由 _env.mjs 给出候选路径（EMD_CONFIG / 任务目录 / 工作目录）
 let PAGE_URL = process.env.EMD_URL || "", OUT_DIR = process.env.EMD_OUT || "", TYPE = process.env.EMD_TYPE || "video";
-const CFG_CANDIDATES = [
-  new URL("./emd-config.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
-  "F:/linshi/ego-task/emd-config.json",
-];
-for (const c of CFG_CANDIDATES) {
+for (const c of ENV.configCandidates()) {
   try {
-    const cfg = JSON.parse(await readFile(c, "utf8"));
+    const cfg = JSON.parse((await readFile(c, "utf8")).replace(/^\uFEFF/, ""));
     PAGE_URL = PAGE_URL || cfg.url || ""; OUT_DIR = OUT_DIR || cfg.out || ""; TYPE = cfg.type || TYPE;
     console.log("CONFIG", c);
     break;

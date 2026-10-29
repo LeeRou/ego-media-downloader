@@ -17,29 +17,31 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
-const FFMPEGDIR = "C:\\ffmpeg\\bin";
-const FFPROBE = FFMPEGDIR + "\\ffprobe.exe";
+
+// ---- 公共环境模块（cmd stdin 下相对 import 不可靠，用多候选目录定位）----
+const ENV = await (async () => {
+  const { pathToFileURL } = await import("node:url");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const roots = [process.env.EMD_TOOLS_DIR, process.cwd(), join(process.cwd(), "ego-task"),
+    join(homedir(), ".agents", "skills", "ego-media-downloader", "tools")].filter(Boolean);
+  for (const r of roots) {
+    try { return await import(pathToFileURL(join(r, "_env.mjs")).href); } catch (e) {}
+  }
+  throw new Error("无法加载 _env.mjs（请与本脚本放在同一目录，或设置 EMD_TOOLS_DIR）");
+})();
+const FFPROBE = ENV.FFPROBE;
 
 // 载入 yt-dlp 内核
-const YT = await (async () => {
-  const cands = [
-    "file:///F:/linshi/ego-task/_ytdlp.mjs",
-    "file:///C:/Users/LR/.agents/skills/ego-media-downloader/tools/_ytdlp.mjs",
-  ];
-  for (const c of cands) { try { return await import(c); } catch (e) {} }
-  throw new Error("无法加载 _ytdlp.mjs（请与脚本一起复制到任务目录）");
-})();
+const YT = await ENV.loadKernel("_ytdlp.mjs");
 
 // ---------- 配置 ----------
 let PAGE_URL = process.env.EMD_URL || "";
 let OUT_DIR = process.env.EMD_OUT || "";
 let COOKIES = "", FILTER = "", PLAYLIST = true, LIMIT = 0;
-for (const c of [
-  "F:/linshi/ego-task/emd-config.json",
-  new URL("./emd-config.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
-]) {
+for (const c of ENV.configCandidates()) {
   try {
-    const cfg = JSON.parse(await readFile(c, "utf8"));
+    const cfg = JSON.parse((await readFile(c, "utf8")).replace(/^\uFEFF/, ""));
     PAGE_URL = PAGE_URL || cfg.url || "";
     OUT_DIR = OUT_DIR || cfg.out || "";
     COOKIES = cfg.cookies || COOKIES;

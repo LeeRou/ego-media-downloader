@@ -5,28 +5,25 @@
 import { writeFile, appendFile, mkdir, readFile } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
 
-// 载入通用「多档择优」内核
-const Q = await (async () => {
-  const cands = [
-    "file:///F:/linshi/ego-task/_quality.mjs",
-    "file:///C:/Users/LR/.agents/skills/ego-media-downloader/tools/_quality.mjs",
-  ];
-  for (const c of cands) {
-    try { return await import(c); } catch (e) {}
+// 载入公共环境模块（cmd stdin 下相对 import 不可靠，用多候选目录定位）
+const ENV = await (async () => {
+  const { pathToFileURL } = await import("node:url");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const roots = [process.env.EMD_TOOLS_DIR, process.cwd(), join(process.cwd(), "ego-task"),
+    join(homedir(), ".agents", "skills", "ego-media-downloader", "tools")].filter(Boolean);
+  for (const r of roots) {
+    try { return await import(pathToFileURL(join(r, "_env.mjs")).href); } catch (e) {}
   }
-  throw new Error("无法加载 _quality.mjs（请与平台脚本一起复制到任务目录）");
+  throw new Error("无法加载 _env.mjs（请与本脚本放在同一目录，或设置 EMD_TOOLS_DIR）");
 })();
+
+// 载入通用「多档择优」内核
+const Q = await ENV.loadKernel("_quality.mjs");
 const { pickBest, pickBestImage, originalImageUrl, parseSrcset, guessImgWidth, imgGroupKey } = Q;
 
 // 载入 yt-dlp 内核（可选）：m3u8 / 原生支持站点直接下成 mp4，而不是存播放列表文本
-const YT = await (async () => {
-  const cands = [
-    "file:///F:/linshi/ego-task/_ytdlp.mjs",
-    "file:///C:/Users/LR/.agents/skills/ego-media-downloader/tools/_ytdlp.mjs",
-  ];
-  for (const c of cands) { try { return await import(c); } catch (e) {} }
-  return null;
-})();
+const YT = await ENV.tryKernel("_ytdlp.mjs");
 let YT_OK = false;
 if (YT) { try { YT_OK = !!(await YT.ytdlpVersion()); } catch (e) {} }
 
@@ -35,12 +32,9 @@ let OUT_DIR = process.env.EMD_OUT || "";
 let TYPE = (process.env.EMD_TYPE || "all").toLowerCase();
 let LIMIT = 0;
 
-for (const c of [
-  "F:/linshi/ego-task/emd-config.json",
-  new URL("./emd-config.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")
-]) {
+for (const c of ENV.configCandidates()) {
   try {
-    const cfg = JSON.parse(await readFile(c, "utf8"));
+    const cfg = JSON.parse((await readFile(c, "utf8")).replace(/^\uFEFF/, ""));
     PAGE_URL = PAGE_URL || cfg.url || "";
     OUT_DIR = OUT_DIR || cfg.out || "";
     TYPE = (cfg.type || TYPE).toLowerCase();
@@ -321,7 +315,7 @@ let ok = 0, fail = 0, skip = 0;
 const { execFile } = await import("node:child_process");
 const { promisify } = await import("node:util");
 const execFileP = promisify(execFile);
-const FFPROBE = "C:\\ffmpeg\\bin\\ffprobe.exe";
+const FFPROBE = ENV.FFPROBE;
 async function probeResolution(path) {
   try {
     const { stdout } = await execFileP(FFPROBE, [

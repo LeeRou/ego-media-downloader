@@ -18,17 +18,23 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
-const FFMPEG = "C:\\ffmpeg\\bin\\ffmpeg.exe";
 
-// 载入通用「多档择优」内核（cmd stdin 模式下相对 import 会解析到 ego 安装目录，必须用绝对 file://）
-const Q = await (async () => {
-  const cands = [
-    "file:///F:/linshi/ego-task/_quality.mjs",
-    "file:///C:/Users/LR/.agents/skills/ego-media-downloader/tools/_quality.mjs",
-  ];
-  for (const c of cands) { try { return await import(c); } catch (e) {} }
-  throw new Error("无法加载 _quality.mjs（请与平台脚本一起复制到任务目录）");
+// ---- 公共环境模块（cmd stdin 下相对 import 不可靠，用多候选目录定位）----
+const ENV = await (async () => {
+  const { pathToFileURL } = await import("node:url");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const roots = [process.env.EMD_TOOLS_DIR, process.cwd(), join(process.cwd(), "ego-task"),
+    join(homedir(), ".agents", "skills", "ego-media-downloader", "tools")].filter(Boolean);
+  for (const r of roots) {
+    try { return await import(pathToFileURL(join(r, "_env.mjs")).href); } catch (e) {}
+  }
+  throw new Error("无法加载 _env.mjs（请与本脚本放在同一目录，或设置 EMD_TOOLS_DIR）");
 })();
+const FFMPEG = ENV.FFMPEG;
+
+// 载入通用「多档择优」内核（由 _env.mjs 在候选目录里定位）
+const Q = await ENV.loadKernel("_quality.mjs");
 
 // YouTube 清晰度标签 → 高度。hd2160/hd1440/hd1080/hd720 走内核通用解析，
 // highres(8K+)/hd4320 这类别名在这里补一下，保证「多档择优」时排序正确。
@@ -45,9 +51,9 @@ let PAGE_URL = process.env.EMD_URL || "";
 let OUT_DIR = process.env.EMD_OUT || "";
 let TYPE = process.env.EMD_TYPE || "all";
 let FILTER = (process.env.EMD_FILTER || "").split("|").map(s => s.trim()).filter(Boolean);
-for (const c of ["F:/linshi/ego-task/emd-config.json", new URL("./emd-config.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")]) {
+for (const c of ENV.configCandidates()) {
   try {
-    const cfg = JSON.parse(await readFile(c, "utf8"));
+    const cfg = JSON.parse((await readFile(c, "utf8")).replace(/^\uFEFF/, ""));
     PAGE_URL = PAGE_URL || cfg.url || "";
     OUT_DIR = OUT_DIR || cfg.out || "";
     TYPE = cfg.type || TYPE;
@@ -252,7 +258,7 @@ for (let i = 0; i < filtered.length; i++) {
     // 记录真实分辨率
     let res = "";
     try {
-      const { stdout } = await execFileP("C:\\ffmpeg\\bin\\ffprobe.exe",
+      const { stdout } = await execFileP(ENV.FFPROBE,
         ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", outPath],
         { windowsHide: true });
       res = stdout.trim();

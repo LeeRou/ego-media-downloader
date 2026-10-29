@@ -1,6 +1,6 @@
 // export-cookies-ytdlp.mjs — 从 ego-browser 已登录会话导出 Netscape cookie 文件给 yt-dlp 用
-// 用法：emd-config.json 里给 {"cookiesFor": ["https://www.youtube.com/", "https://x.com/"], "cookiesOut": "F:\\linshi\\ego-task\\ck"}
-// 或直接改下方 SITES。
+// 用法：emd-config.json 里给 {"cookiesFor": ["https://www.youtube.com/", "https://x.com/"], "cookiesOut": "<绝对目录>"}
+// cookiesOut 不写则默认任务目录（EMD_TASK_DIR / 工作目录下的 ego-task / 工作目录）。也可直接改下方 SITES。
 //
 // 【为什么需要】yt-dlp 的 --cookies-from-browser 读不了 ego lite 的 profile：
 //   实测 `--cookies-from-browser "chrome:<ego User Data>"` 报
@@ -17,14 +17,24 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { readFile } from "node:fs/promises";
 
+// ---- 公共环境模块（cmd stdin 下相对 import 不可靠，用多候选目录定位）----
+const ENV = await (async () => {
+  const { pathToFileURL } = await import("node:url");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const roots = [process.env.EMD_TOOLS_DIR, process.cwd(), join(process.cwd(), "ego-task"),
+    join(homedir(), ".agents", "skills", "ego-media-downloader", "tools")].filter(Boolean);
+  for (const r of roots) {
+    try { return await import(pathToFileURL(join(r, "_env.mjs")).href); } catch (e) {}
+  }
+  throw new Error("无法加载 _env.mjs（请与本脚本放在同一目录，或设置 EMD_TOOLS_DIR）");
+})();
+
 let SITES = [];
-let OUT_DIR = "F:\\linshi\\ego-task";
-for (const c of [
-  "F:/linshi/ego-task/emd-config.json",
-  new URL("./emd-config.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
-]) {
+let OUT_DIR = ENV.resolveTaskDir();
+for (const c of ENV.configCandidates()) {
   try {
-    const cfg = JSON.parse(await readFile(c, "utf8"));
+    const cfg = JSON.parse((await readFile(c, "utf8")).replace(/^\uFEFF/, ""));
     if (cfg.cookiesFor) SITES = cfg.cookiesFor;
     if (cfg.cookiesOut) OUT_DIR = cfg.cookiesOut;
     break;

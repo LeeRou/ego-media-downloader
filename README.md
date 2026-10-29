@@ -38,11 +38,11 @@ C:\Users\<你>\.agents\skills\ego-media-downloader\
 | 依赖 | 必需性 | 说明 |
 |---|---|---|
 | **ego-browser（ego lite）** | **必需** | 所有平台发现都靠它；且必须能在**无沙箱**下运行（它通过命名管道连本机 daemon） |
-| **ffmpeg / ffprobe** | **必需** | 音视频合并与成品校验；脚本默认找 `C:\ffmpeg\bin\` |
-| **yt-dlp** | 可选 | PATH 里有就自动启用加速；没有则全程走自研方案 |
+| **ffmpeg / ffprobe** | **必需** | 音视频合并与成品校验。**自动探测**：`FFMPEG_BIN` → `PATH` → 工具目录 → 常见安装路径 |
+| **yt-dlp** | 可选 | `PATH` 里有就自动启用加速；没有则全程走自研方案 |
 | **Node.js** | 必需 | ego-browser 自带运行脚本能力，无需另装 |
 
-改动 `tools/_quality.mjs` 后必须跑单测：
+改动 `tools/*.mjs` 后必须跑单测：
 
 ```powershell
 cd tools
@@ -99,7 +99,14 @@ Start-Process -FilePath "cmd.exe" -ArgumentList @('/c','"...\ego-browser.exe" no
 - ego-browser 的 `console.log` 输出走 **stderr**，读 `err.txt`
 - **中文只放文件内**，绝不放进命令行参数
 
-配置走脚本同目录的 `emd-config.json`（ego-browser 子进程读不到宿主 `$env:`）：
+配置放在**用户级数据目录**（推荐，任何工作目录都能找到）：
+
+```
+%USERPROFILE%\.ego-media-downloader\emd-config.json
+```
+
+也支持放在 skill 的 `tools/` 目录、skill 根目录、或 `%USERPROFILE%\ego-task\`。
+查找顺序：`EMD_CONFIG` > 用户级数据目录 > `tools/` > skill 根 > `%USERPROFILE%\ego-task` > 工作目录。
 
 ```json
 {
@@ -114,6 +121,8 @@ Start-Process -FilePath "cmd.exe" -ArgumentList @('/c','"...\ego-browser.exe" no
 可选字段：`engine: "auto" | "builtin"`（是否用 yt-dlp 加速）、`cookies`（Netscape cookie 文件）、
 `playlist: false`（只下单条）、`cookiesFor` / `cookiesOut`（给 cookie 导出脚本用）。
 
+> 配置文件带 UTF-8 BOM 也能正常解析（脚本会剥掉 BOM）。
+
 ---
 
 ## 登录态桥接（ego → yt-dlp）
@@ -122,7 +131,7 @@ yt-dlp 的 `--cookies-from-browser` **读不了 ego 的 profile**（会报 `Coul
 用 `tools/export-cookies-ytdlp.mjs` 走 ego CDP 导出 Netscape 格式，再交给 yt-dlp：
 
 ```json
-{"cookiesFor": ["https://x.com/"], "cookiesOut": "F:\\linshi\\ego-task"}
+{"cookiesFor": ["https://x.com/"], "cookiesOut": "%USERPROFILE%\\.ego-media-downloader"}
 ```
 
 ```powershell
@@ -164,6 +173,32 @@ yt-dlp --cookies F:\linshi\ego-task\ck-x.com.txt ...
 
 ---
 
+## 可移植性（为什么脚本里没有写死路径）
+
+ego-browser 用 `ego-browser nodejs < script.mjs` 执行脚本时，实测运行时环境很受限：
+
+| 想拿到的 | 实际值 |
+|---|---|
+| `process.cwd()` | **ego 安装目录**（不是你的工作目录） |
+| `import.meta.url` | `.../Application/<ver>/[eval2]`（不是脚本路径） |
+| `process.argv` | `[ego.exe]` |
+| 宿主 PowerShell 新设的 `$env:XXX` | **不透传**（daemon 有独立环境） |
+| `%USERPROFILE%` / `%PATH%` | ✅ 可读 |
+
+所以脚本不能靠相对路径或环境变量定位文件，统一由 **`tools/_env.mjs`** 从 `%USERPROFILE%` 推导候选目录：
+
+```
+%USERPROFILE%\.agents\skills\ego-media-downloader\tools   ← 标准安装位置
+%USERPROFILE%\.ego-media-downloader\tools
+%USERPROFILE%\ego-task
+<工作目录> / <工作目录>\ego-task / 脚本自身目录
+```
+
+**推论**：把整个 skill 目录拷到任何机器的同一相对位置（`~/.agents/skills/ego-media-downloader/`），
+或任意位置 + 设置 `EMD_TOOLS_DIR`，即可直接工作，无需改代码。
+
+---
+
 ## 目录结构
 
 ```
@@ -173,6 +208,7 @@ ego-media-downloader/
 ├── references/
 │   └── platforms.md          # 各平台抓取配方 + 演化日志
 └── tools/
+    ├── _env.mjs              # 公共环境解析（工具目录/配置查找/ffmpeg 定位）
     ├── _quality.mjs          # 「多档择优」内核（所有脚本共用）
     ├── _ytdlp.mjs            # yt-dlp 下载内核（可选加速器）
     ├── test_quality.mjs      # 内核单测（32 例）

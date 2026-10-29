@@ -12,24 +12,30 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
-const FFMPEG = "C:\\ffmpeg\\bin\\ffmpeg.exe";
-const FFPROBE = "C:\\ffmpeg\\bin\\ffprobe.exe";
 
-// 载入通用「多档择优」内核（cmd stdin 模式下相对 import 会解析到 ego 安装目录，必须用绝对 file://）
-const Q = await (async () => {
-  const cands = [
-    "file:///F:/linshi/ego-task/_quality.mjs",
-    "file:///C:/Users/LR/.agents/skills/ego-media-downloader/tools/_quality.mjs",
-  ];
-  for (const c of cands) { try { return await import(c); } catch (e) {} }
-  throw new Error("无法加载 _quality.mjs（请与平台脚本一起复制到任务目录）");
+// ---- 公共环境模块（cmd stdin 下相对 import 不可靠，用多候选目录定位）----
+const ENV = await (async () => {
+  const { pathToFileURL } = await import("node:url");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const roots = [process.env.EMD_TOOLS_DIR, process.cwd(), join(process.cwd(), "ego-task"),
+    join(homedir(), ".agents", "skills", "ego-media-downloader", "tools")].filter(Boolean);
+  for (const r of roots) {
+    try { return await import(pathToFileURL(join(r, "_env.mjs")).href); } catch (e) {}
+  }
+  throw new Error("无法加载 _env.mjs（请与本脚本放在同一目录，或设置 EMD_TOOLS_DIR）");
 })();
+const FFMPEG = ENV.FFMPEG;
+const FFPROBE = ENV.FFPROBE;
+
+// 载入通用「多档择优」内核（由 _env.mjs 在候选目录里定位）
+const Q = await ENV.loadKernel("_quality.mjs");
 const { pickBiliDash, BILI_QN, BILI_CODEC_NAME } = Q;
 
 let PAGE_URL = process.env.EMD_URL || "", OUT_DIR = process.env.EMD_OUT || "", TYPE = process.env.EMD_TYPE || "all";
-for (const c of ["F:/linshi/ego-task/emd-config.json", new URL("./emd-config.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")]) {
+for (const c of ENV.configCandidates()) {
   try {
-    const cfg = JSON.parse(await readFile(c, "utf8"));
+    const cfg = JSON.parse((await readFile(c, "utf8")).replace(/^\uFEFF/, ""));
     PAGE_URL = PAGE_URL || cfg.url || ""; OUT_DIR = OUT_DIR || cfg.out || ""; TYPE = cfg.type || TYPE;
     console.log("CONFIG", c);
     break;

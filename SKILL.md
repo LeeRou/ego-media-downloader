@@ -2,7 +2,7 @@
 name: ego-media-downloader
 description: 自动调用 ego-browser，从指定 URL 下载视频或图片，**所有网站统一遵循「多档择优」：同一作品有多档清晰度/多个候选直链时，全部收集后按分辨率→码率→体积取最高，绝不取第一个候选**。会在指定目录（未指定时视频默认 G:\我的云端硬盘\视频、图片默认 G:\我的云端硬盘\图片）下，新建「以博主用户名为名」的文件夹并下载全部媒体；拿不到用户名则用日期 YYYY-MM-DD 作文件夹名。支持整页/主页批量下载与单条媒体链接。**双引擎：ego-browser 负责发现（登录态/反爬/翻页），yt-dlp 负责下载（分片并发/AES 解密/断点续传/上千站点原生支持）**，yt-dlp 不可用时自动回退自研方案（抖音/头条/B站/YouTube/X/91吃瓜有验证配方，小红书及通用站点尽力而为）。
 argument-hint: "<url> [--dir 目录] [--type video|image|all] [--name 用户名] [--limit N]"
-version: "1.0.10"
+version: "1.0.11"
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
@@ -78,12 +78,20 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
    - 没给：视频根 `G:\我的云端硬盘\视频`，图片根 `G:\我的云端硬盘\图片`；按 `type` 分别建 `<用户名>/`（type=all 时两个根各建一个）。
 3. **确定作者名**（优先级）：`--name` > 平台资料页提取 > 页面 `<title>` / URL slug > 日期 `YYYY-MM-DD`。
 4. **组装输出路径**：`<根>/<作者名>/`，记到变量 `OUT_DIR`。
-5. **选配方**：按 URL 域名挑 `tools/*.mjs`（见下「平台选择」）。把**平台脚本和 `_quality.mjs` 两个文件**一起复制到 `F:\linshi\ego-task\`，并在**同一目录**写一个 `emd-config.json`：
+5. **选配方**：按 URL 域名挑 `tools/*.mjs`（见下「平台选择」）。
+   **不需要复制脚本**——直接运行 skill 目录里的脚本即可（模块由 `tools/_env.mjs` 从 `%USERPROFILE%` 推导定位）。
+   只需写一份配置文件到**用户级数据目录**：
+   ```powershell
+   # %USERPROFILE%\.ego-media-downloader\emd-config.json
+   ```
    ```json
    { "url": "这里填目标地址", "out": "这里填最终文件夹路径（已含用户名/日期）", "type": "video|image|all", "limit": 0 }
    ```
    （`limit` 可选，0 或不写=全部；`filter` 可选，按标题关键词筛，如 `"filter":"孙珍妮|程儿"`）
-   ⚠️ **`_quality.mjs` 必须一起复制**：ego-browser 用 cmd stdin 跑脚本时，脚本被当作 `[eval2]` 执行，**相对 import 会解析到 ego 安装目录**而不是脚本目录，所以平台脚本里用的是「绝对 `file://` 候选路径」动态 import。漏了 `_quality.mjs` 会报 `Cannot find module ...\_quality.mjs`。
+   ⚠️ **为什么不能靠相对路径/环境变量**：ego-browser 用 cmd stdin 运行脚本时，`process.cwd()` 是 ego 安装目录、
+   `import.meta.url` 是 `[eval2]`、宿主新设的 `$env:` 也不透传。所以 `_quality.mjs` / `_ytdlp.mjs` / `emd-config.json`
+   全部由 `_env.mjs` 按候选目录查找（`%USERPROFILE%\.agents\skills\ego-media-downloader\tools` 优先）。
+   配置文件带 UTF-8 BOM 也能解析。
    然后运行（**Windows 实测可靠写法**）：
    ```
    # 用 cmd 的 stdin 重定向把 .mjs 喂给 nodejs；必须包在 Start-Process cmd /c 里
@@ -96,7 +104,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
      - 或者整个会话切「完全权限」/「自动审查」（都无沙箱）。
    - **中文只放文件内，绝不放进命令行参数。**
    - 配置优先级：`emd-config.json` 为可靠方式（ego-browser 子进程读不到宿主 PowerShell 的 `$env:`）；env 仅作兜底。
-   - 脚本按「`F:/linshi/ego-task/emd-config.json` → 脚本同目录」两处找配置。
+   - 脚本按 `_env.mjs` 的候选顺序找配置：`EMD_CONFIG` > `%USERPROFILE%\.ego-media-downloader\emd-config.json` > `tools/` > skill 根 > `%USERPROFILE%\ego-task` > 工作目录。
 6. **脚本会自动**：注入 XHR 钩子 → 打开页面（已登录）→ 滚动 / 翻页枚举媒体 → **收集该站全部档位候选 → 交给 `_quality.mjs` 按分辨率/码率/体积取最高档** → 逐条下载（**已存在则跳过 = 断点续传**）→ 写 `manifest.csv`（`index,vid,title,file,bytes,resolution,bitrate`）与 `_items.json`（含 `nCand`/`allDefs` 供核验）。
 7. **汇报**：下载数量、总大小、**分辨率分布**、失败项、输出目录。若有条目最高档明显低于源分辨率，说明站点本身没有更高档，要点明。
 8. **自动进化（每次运行后必做，见下「自动进化」）**：若本次遇到 **新平台 / 新坑 / 需要新建的站点专用脚本**，必须当场把成果融合回本 skill（新建 `tools/<平台>-<类型>.mjs`、补 `references/platforms.md` 配方与演化日志、更新下方「平台选择」路由、更新 `EVOLUTION.md`），使跨会话也能继承。
@@ -130,7 +138,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 
 ```powershell
 # 1) 从 ego 已登录会话导出 Netscape cookie（yt-dlp 读不了 ego 的 profile 数据库）
-#    emd-config.json: {"cookiesFor":["https://x.com/"],"cookiesOut":"F:\\linshi\\ego-task"}
+#    emd-config.json: {"cookiesFor":["https://x.com/"],"cookiesOut":"C:\\path\\to\\cookies"}
 #    然后跑 tools/export-cookies-ytdlp.mjs
 # 2) 交给 yt-dlp
 yt-dlp --cookies F:\linshi\ego-task\ck-x.com.txt ...
@@ -164,6 +172,29 @@ yt-dlp --cookies F:\linshi\ego-task\ck-x.com.txt ...
 
 **新增平台脚本时**：必须 `import` `_quality.mjs` 并走 `rankCands`/`pickBest`，不得自己取 `[0]`。
 下载环节优先复用 `_ytdlp.mjs`（`downloadWithYtdlp` / `isYtdlpFriendly`），并保留一条自研回退路径。
+
+**新增脚本的固定模板**（文件头必须照抄，否则在 ego 的 `[eval2]` 运行时里找不到模块）：
+
+```js
+const ENV = await (async () => {
+  const { pathToFileURL } = await import("node:url");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const roots = [process.env.EMD_TOOLS_DIR, process.cwd(), join(process.cwd(), "ego-task"),
+    join(homedir(), ".agents", "skills", "ego-media-downloader", "tools")].filter(Boolean);
+  for (const r of roots) {
+    try { return await import(pathToFileURL(join(r, "_env.mjs")).href); } catch (e) {}
+  }
+  throw new Error("无法加载 _env.mjs（请与本脚本放在同一目录，或设置 EMD_TOOLS_DIR）");
+})();
+const Q = await ENV.loadKernel("_quality.mjs");
+const YT = await ENV.tryKernel("_ytdlp.mjs");       // 可选
+const FFMPEG = ENV.FFMPEG, FFPROBE = ENV.FFPROBE;   // 不要写死 C:\ffmpeg\bin
+for (const c of ENV.configCandidates()) { /* 读 emd-config.json */ }
+```
+
+**禁止**在脚本里出现任何个人绝对路径（`C:\Users\<你>`、`D:\some\dir`、`C:\ffmpeg\bin`）——
+公开仓库里会直接导致别人和三方机器跑不起来。
 
 具体抓取细节、用户名提取方式、常见坑见 `references/platforms.md`。
 
