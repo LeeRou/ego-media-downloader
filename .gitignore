@@ -1,0 +1,38 @@
+# 依赖与运行时产物
+node_modules/
+vendor/
+*.log
+
+# 下载产物与临时目录（不要提交媒体文件）
+out/
+output/
+videos/
+_tmp_*/
+*.mp4
+*.mkv
+*.webm
+*.flv
+*.ts
+*.m4s
+*.mp3
+*.m4a
+
+# 凭据 / cookie（绝不提交）
+*.cookies.txt
+ck-*.txt
+*-cookies.txt
+cookies.json
+.env
+.env.*
+secrets.json
+
+# 运行配置（含个人绝对路径）
+emd-config.json
+
+# OS / 编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
